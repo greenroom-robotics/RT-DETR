@@ -9,6 +9,7 @@ import torch
 import torch.nn as nn
 import datetime
 from src.core import YAMLConfig
+from src.solver._solver import BaseSolver
 import json
 import onnx
 import onnxsim
@@ -37,7 +38,10 @@ def main(
     args,
 ):
     """main"""
+    resize_h, resize_w = (args.input_size, args.input_size)
+
     update_dict = {k: v for k, v in args.__dict__.items() if v is not None}
+    update_dict["eval_spatial_size"] = [resize_h, resize_w]
     cfg = YAMLConfig(args.config, **update_dict)
 
     if args.resume:
@@ -47,8 +51,11 @@ def main(
         else:
             state = checkpoint["model"]
 
-        # NOTE load train mode state -> convert to deploy mode
-        cfg.model.load_state_dict(state)
+        # Export resolution can differ from checkpoint resolution, so ignore buffers that don't match.
+        # Model will regenerate the buffers at desired export resolution.
+        matched_state, infos = BaseSolver._matched_state(cfg.model.state_dict(), state)
+        cfg.model.load_state_dict(matched_state, strict=False)
+        print(f"Loaded model.state_dict, {infos}")
 
     else:
         # raise AttributeError('Only support resume to load model.state_dict by now.')
@@ -69,7 +76,6 @@ def main(
 
     model = Model()
 
-    resize_h, resize_w = (args.input_size, args.input_size)
     data = torch.rand(1, args.image_channels, resize_h, resize_w)
     size = torch.tensor([[resize_h, resize_w]])
     _ = model(data, size)
