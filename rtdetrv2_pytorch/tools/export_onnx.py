@@ -80,11 +80,9 @@ def main(
     size = torch.tensor([[resize_h, resize_w]])
     _ = model(data, size)
 
-    # Enable dynamic batch size
+    # Dynamic batch size.
     dynamic_axes = {
-        "images": {
-            0: "N",
-        },
+        "images": {0: "N"},
         "orig_target_sizes": {0: "N"},
     }
 
@@ -98,6 +96,8 @@ def main(
         opset_version=18,
         verbose=False,
         do_constant_folding=True,
+        # Use the legacy exporter, otherwise maxBatchSize is capped to 1 in TRT for some reason.
+        dynamo=False,
     )
     classes = list(cfg.train_dataloader.dataset.category2name.values())
 
