@@ -119,7 +119,7 @@ def main(
         onnx.save(onnx_model_simplify, args.output_file)
         print(f"Successfully simplified onnx model: {check}...")
 
-    if args.fix_dimensions:
+    if args.single_input:
         constant_value = np.array([[resize_h, resize_w]], dtype=np.int64)
         const_input(args.output_file, "orig_target_sizes", constant_value)
 
@@ -178,7 +178,12 @@ if __name__ == "__main__":
         action="store_true",
         default=False,
     )
-    parser.add_argument("--fix_dimensions", action="store_true", default=False)
+    parser.add_argument(
+        "--single_input",
+        action="store_true",
+        default=False,
+        help="Add orig_target_sizes into a constant leaving `images` as the only input.",
+    )
     args = parser.parse_args()
 
     main(args)
