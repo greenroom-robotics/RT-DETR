@@ -1,0 +1,85 @@
+__include__: [
+  '../dataset/gr_detection.yml',
+  './include/dataloader.yml',
+  './include/optimizer.yml',
+  './include/rtdetrv2_r50vd.yml',
+  '../runtime.yml',
+]
+
+# One epoch smoke test against a fixed lakeFS path. Export to
+# /mnt/lakefs/datasets/eo/experiments/smoke first, then run this config unedited.
+# Raise total_batch_size on a bigger GPU: roughly 1.6 GB per image at 1280x1280.
+
+num_classes: 13
+epoches: 1
+
+train_dataloader:
+  type: DataLoader
+  dataset:
+    type: CocoDetection
+    img_folder: /mnt/lakefs
+    ann_file: /mnt/lakefs/datasets/eo/experiments/smoke/coco_labels/split_train.mapped.json
+    return_masks: False
+    transforms:
+      type: Compose
+      ops:
+        - {type: RandomPhotometricDistort, p: 0.5}
+        - {type: RandomZoomOut, fill: 0}
+        - {type: RandomIoUCrop, p: 0.8}
+        - {type: SanitizeBoundingBoxes, min_size: 1}
+        - {type: RandomHorizontalFlip}
+        - {type: Resize, size: [1280, 1280], }
+        - {type: SanitizeBoundingBoxes, min_size: 1}
+        - {type: ConvertPILImage, dtype: 'float32', scale: True}
+        - {type: ConvertBoxes, fmt: 'cxcywh', normalize: True}
+      policy:
+        epoch: 117
+  collate_fn:
+    type: BatchImageCollateFuncion
+    scales: ~
+  total_batch_size: 4
+  shuffle: True
+  num_workers: 4
+  drop_last: True
+
+val_dataloader:
+  type: DataLoader
+  dataset:
+    type: CocoDetection
+    img_folder: /mnt/lakefs
+    ann_file: /mnt/lakefs/datasets/eo/experiments/smoke/coco_labels/split_test.mapped.json
+    return_masks: False
+    transforms:
+      type: Compose
+      ops:
+        - {type: Resize, size: [1280, 1280]}
+        - {type: ConvertPILImage, dtype: 'float32', scale: True}
+  total_batch_size: 4
+  shuffle: False
+  num_workers: 4
+  drop_last: False
+  collate_fn:
+    type: BatchImageCollateFuncion
+
+PResNet:
+  depth: 18
+  freeze_at: -1
+  freeze_norm: False
+  pretrained: True
+
+HybridEncoder:
+  in_channels: [128, 256, 512]
+  hidden_dim: 256
+  expansion: 0.5
+
+RTDETRTransformerv2:
+  num_layers: 3
+
+optimizer:
+  type: AdamW
+  params:
+    -
+      params: '^(?=.*(?:norm|bn)).*$'
+      weight_decay: 0.
+
+eval_spatial_size: [1280, 1280]
