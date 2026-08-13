@@ -1,6 +1,7 @@
 # General
-torch==2.4.*
-torchvision==0.19.*
+# TODO: is this required?
+torch>=2.8,<2.9
+torchvision>=0.23,<0.24
 pycocotools
 PyYAML
 tensorboard
