@@ -1,0 +1,164 @@
+__include__: [
+  '../dataset/gr_detection.yml',
+  './include/dataloader.yml',
+  './include/optimizer.yml',
+  './include/rtdetrv2_r50vd.yml',
+  '../runtime.yml',
+]
+
+
+# Horizon band EO detector, proof of concept. See platform_perception/horizon-detection-plan.md.
+#
+# The full-frame model stretches 2560x1280 into 1280x1280, so a 6 px vessel arrives as ~3 px.
+# This model reads a 2560x320 strip at NATIVE pixel scale instead, and runs beside the
+# full-frame model rather than replacing it. 0.50x the pixels of the square model.
+#
+# Warm-started from angry-mare-613 (rtdetrv2.rgb.leidos@challenger v3)
+#   -c "https://mlflow.ml.grr.dev/get-artifact?path=pytorch_model%2Fbest.pth&run_uuid=11b4a29bad564efd85d4d863a34a8aa8"
+#
+# v4. Same as v3 in every respect except which epoch is kept.
+#
+# v3 selected best.pth on aggregate COCO AP, which is not what this model is judged on. COCO
+# buckets by AREA and its "small" class holds 89% of horizon ground truth, so AP_small carries
+# no range signal either. distant_target_recall measures recall of targets 4 to 12 px WIDE, at
+# a usable confidence, which for a small craft is 1.0 to 3.1 NM.
+#
+# On v3, three checkpoints scored very differently on the range ladder despite similar AP:
+#   epoch 17 (best AP_all)   +14.6 at 4-6 px
+#   epoch 14 (best AP_small)  +8.6
+#   epoch 15 (best AR_small)  +4.6
+# Only three of twenty were tested. Selecting on the objective itself should do at least as
+# well and needs no extra training.
+#
+# v1 merged to 3 classes and re-initialised the classifier. Over six epochs it showed the cost:
+#     loss_bbox  0.668 -> 0.058   localisation transferred and learned
+#     loss_giou  1.740 -> 0.590
+#     loss_vfl   0.237 -> 0.481   classification got worse
+#     AP50 flat at 0.002
+# It found the objects and could not rank them. That confounds two changes at once, so it
+# cannot answer whether native resolution helps. Keep 9 classes here and merge to 3 downstream.
+#
+# `unmatched` should now be ONLY the two spatial buffers, which must be rebuilt at 320x2560:
+#     decoder.anchors, decoder.valid_mask
+# Anything else means the config diverged from the checkpoint. Nothing fails if it does.
+#
+# EPOCH BUDGET: 20, as the parent used for an aligned warm start. Its own parent peaked at
+# epoch 3 of 30, so expect the peak early. best.pth captures it, so a generous cap costs only
+# wall-clock. policy.epoch is epoches-3, per house convention.
+num_classes: 10 # 9 classes + 1, the same space as angry-mare-613  [map_9cls]
+epoches: 20
+
+# Data is the ipanema 2560x1280 subset of e26-008, cropped to a 640-row strip centred on row
+# 654. That row is measured, not assumed: over the ipanema labels a 320-row band there holds
+# 97.1% of all boxes and 99.9% of the boxes 8 px and under. The binned innovator batches
+# (1440x928) are excluded on resolution, because they carry the same targets at half the
+# pixels and would teach the model the wrong apparent size.
+#
+# Train keeps its 1593 negatives, val drops them: an empty image in validation trips the
+# per-epoch pycocotools evaluation.
+train_dataloader:
+  type: DataLoader
+  dataset:
+    type: CocoDetection
+    img_folder: /mnt/lakefs/datasets/eo/experiments/e26-014-d26-006-horizon-band-poc
+    ann_file: /mnt/lakefs/datasets/eo/experiments/e26-014-d26-006-horizon-band-poc/coco_labels_9cls/split_train.mapped.json
+    return_masks: False
+    transforms:
+      type: Compose
+      ops:
+        # NO Resize, NO RandomZoomOut, NO RandomIoUCrop. All three change scale, and native
+        # scale is the only reason this model exists. RandomBandCrop takes the 320-row network
+        # input out of the 640-row stored strip, so it changes position and never size.
+        - {type: RandomPhotometricDistort, p: 0.5}
+        - {type: RandomBandCrop, height: 320}
+        - {type: RandomHorizontalFlip}
+        - {type: SanitizeBoundingBoxes, min_size: 1}
+        - {type: ConvertPILImage, dtype: 'float32', scale: True}
+        - {type: ConvertBoxes, fmt: 'cxcywh', normalize: True}
+      policy:
+        # The inherited policy lists RandomZoomOut and RandomIoUCrop, which this config
+        # removes, and stop_epoch matches on class name. Restate it, or the switch does
+        # nothing at all.
+        name: stop_epoch
+        epoch: 17   # epoches - 3
+        ops: ['RandomPhotometricDistort']
+  collate_fn:
+    type: BatchImageCollateFuncion
+    scales: ~   # multi-scale is another scale changer, and it lives outside `transforms`
+  # 8, not 12. gr-sim-sydney's GPU is shared, and a perception_eval run holds ~2.7 GB of the
+  # 16 GB. At 12 this run took 10.0 GB and left only 3.4 GB free, which validation at a larger
+  # batch would have eaten. 8 leaves room for the other job.
+  total_batch_size: 8
+  shuffle: True
+  num_workers: 4
+  drop_last: True
+
+val_dataloader:
+  type: DataLoader
+  dataset:
+    type: CocoDetection
+    # Validation media is stored AT band height, and NOTHING crops it here.
+    #
+    # CocoDetection sets target["orig_size"] in prepare(), which runs BEFORE the transforms,
+    # so it records the size of the file on disk. The postprocessor then scales normalised
+    # predictions by orig_size, and CocoEvaluator compares them against the annotation file.
+    # A Resize keeps normalised coordinates unchanged, so every square config is fine. A CROP
+    # does not: cropping a 640 row strip to 320 left orig_size at 640, so every prediction
+    # landed at twice its true row and AP read ~0 no matter how well the model trained.
+    #
+    # Storing the val split already cropped removes the transform, and with it the trap.
+    img_folder: /mnt/lakefs/datasets/eo/experiments/e26-014-d26-006-horizon-band-poc/val320
+    ann_file: /mnt/lakefs/datasets/eo/experiments/e26-014-d26-006-horizon-band-poc/val320/coco_labels/split_test.mapped.json
+    return_masks: False
+    transforms:
+      type: Compose
+      ops:
+        - {type: ConvertPILImage, dtype: 'float32', scale: True}
+  total_batch_size: 8
+  shuffle: False
+  num_workers: 4
+  drop_last: False
+  collate_fn:
+    type: BatchImageCollateFuncion
+
+
+PResNet:
+  depth: 18
+  freeze_at: -1
+  freeze_norm: False
+  pretrained: True
+
+
+HybridEncoder:
+  in_channels: [128, 256, 512]
+  hidden_dim: 256
+  expansion: 0.5
+
+
+RTDETRTransformerv2:
+  num_layers: 3
+
+optimizer:
+  type: AdamW
+  params:
+    -
+      params: '^(?=.*(?:norm|bn)).*$'
+      weight_decay: 0.
+
+# [height, width]. Rectangular, and the reason export_onnx.py had to stop assuming a square.
+# At strides 8/16/32 this gives 320x40 + 160x20 + 80x10 = 16800 anchors.
+# Warmup was 2000 steps against 598 steps per epoch, so a run spent its first 3.3 epochs below
+# the target rate. That is most of the budget when the peak is expected at epoch 3.
+lr_warmup_scheduler:
+  type: LinearWarmup
+  warmup_duration: 500
+
+# Recall of targets in the contested apparent-width range, at the deployed operating point.
+distant_target_metric:
+  width_range: [4, 12]
+  iou_threshold: 0.3
+  score_threshold: 0.25
+
+checkpoint_metric: distant_target_recall
+
+eval_spatial_size: [320, 2560]
