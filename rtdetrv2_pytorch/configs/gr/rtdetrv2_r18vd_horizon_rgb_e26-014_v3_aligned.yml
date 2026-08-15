@@ -86,14 +86,22 @@ val_dataloader:
   type: DataLoader
   dataset:
     type: CocoDetection
-    img_folder: /mnt/lakefs/datasets/eo/experiments/e26-014-d26-006-horizon-band-poc
-    ann_file: /mnt/lakefs/datasets/eo/experiments/e26-014-d26-006-horizon-band-poc/coco_labels_9cls/split_test.mapped.json
+    # Validation media is stored AT band height, and NOTHING crops it here.
+    #
+    # CocoDetection sets target["orig_size"] in prepare(), which runs BEFORE the transforms,
+    # so it records the size of the file on disk. The postprocessor then scales normalised
+    # predictions by orig_size, and CocoEvaluator compares them against the annotation file.
+    # A Resize keeps normalised coordinates unchanged, so every square config is fine. A CROP
+    # does not: cropping a 640 row strip to 320 left orig_size at 640, so every prediction
+    # landed at twice its true row and AP read ~0 no matter how well the model trained.
+    #
+    # Storing the val split already cropped removes the transform, and with it the trap.
+    img_folder: /mnt/lakefs/datasets/eo/experiments/e26-014-d26-006-horizon-band-poc/val320
+    ann_file: /mnt/lakefs/datasets/eo/experiments/e26-014-d26-006-horizon-band-poc/val320/coco_labels/split_test.mapped.json
     return_masks: False
     transforms:
       type: Compose
       ops:
-        # Deterministic, so a score is comparable between epochs and between runs.
-        - {type: CenterBandCrop, height: 320}
         - {type: ConvertPILImage, dtype: 'float32', scale: True}
   total_batch_size: 8
   shuffle: False
