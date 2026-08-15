@@ -31,13 +31,11 @@ __include__: [
 #     decoder.anchors, decoder.valid_mask
 # Anything else means the config diverged from the checkpoint. Nothing fails if it does.
 #
-# EPOCH BUDGET: 30. The parent needed 20 with an ALIGNED head, and v1 peaked at epoch 3 of 30.
-# A fresh classifier needs longer than an aligned one, but the peak is still expected early.
-# best.pth captures it either way, so a generous cap costs only wall-clock. policy.epoch is
-# epoches-3 per house convention. Treat run 1 as calibration for both numbers: read the loss
-# curve and shorten if it peaks early.
+# EPOCH BUDGET: 20, as the parent used for an aligned warm start. Its own parent peaked at
+# epoch 3 of 30, so expect the peak early. best.pth captures it, so a generous cap costs only
+# wall-clock. policy.epoch is epoches-3, per house convention.
 num_classes: 10 # 9 classes + 1, the same space as angry-mare-613  [map_9cls]
-epoches: 30
+epoches: 20
 
 # Data is the ipanema 2560x1280 subset of e26-008, cropped to a 640-row strip centred on row
 # 654. That row is measured, not assumed: over the ipanema labels a 320-row band there holds
