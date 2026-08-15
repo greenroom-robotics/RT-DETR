@@ -73,3 +73,17 @@ def test_given_a_ladder_then_each_box_lands_in_its_width_bucket(ground_truth):
     rows = width_ladder(ground_truth, {1: [NARROW, WIDE]})
 
     assert [(bucket, total) for bucket, total, _ in rows] == [((6, 8), 1), ((20, 40), 1)]
+
+
+def test_given_a_flooding_model_then_precision_collapses_even_though_recall_holds(ground_truth):
+    """The property AP gets for free by integrating precision, reported at the operating point."""
+    clean = distant_target_recall(ground_truth, {1: [NARROW, WIDE]})
+    flood = distant_target_recall(
+        ground_truth,
+        {1: [NARROW] + [[float(x), 200.0, float(x) + 5, 204.0] for x in range(0, 400, 10)]},
+    )
+
+    assert flood.recall == pytest.approx(clean.recall)
+    assert clean.precision == pytest.approx(1.0)
+    assert flood.precision < 0.1, "the extra boxes are all false positives"
+    assert flood.f1 < clean.f1

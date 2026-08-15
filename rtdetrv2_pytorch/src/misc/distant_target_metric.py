@@ -81,6 +81,8 @@ class DistantTargetRecall:
 
     matched: int
     total: int
+    predicted_in_range: int
+    predicted_matching: int
     boxes_per_image: float
     width_range: tuple[float, float]
     iou_threshold: float
@@ -90,10 +92,30 @@ class DistantTargetRecall:
     def recall(self) -> float:
         return self.matched / self.total if self.total else 0.0
 
+    @property
+    def precision(self) -> float:
+        """Of the detections in this width range, how many landed on a target.
+
+        AP folds precision in by integrating the precision-recall curve, which is why it beat
+        AR as a selector. This reports it at the operating point instead, which AP cannot do.
+
+        On data whose labels are incomplete, and horizon labels usually are, the absolute value
+        is pessimistic because an unlabelled vessel counts against it. It stays comparable
+        BETWEEN models on the same data, which is what selection needs.
+        """
+        return self.predicted_matching / self.predicted_in_range if self.predicted_in_range else 0.0
+
+    @property
+    def f1(self) -> float:
+        """Recall and precision together, so a model cannot win on either alone."""
+        denominator = self.recall + self.precision
+        return 2 * self.recall * self.precision / denominator if denominator else 0.0
+
     def __str__(self) -> str:
         low, high = self.width_range
         return (
             f"distant target recall {100 * self.recall:.1f}% ({self.matched}/{self.total}) "
+            f"precision {100 * self.precision:.1f}% f1 {100 * self.f1:.1f}% "
             f"for {low:.0f}-{high:.0f} px wide, IoU>={self.iou_threshold}, "
             f"score>={self.score_threshold}, {self.boxes_per_image:.2f} boxes/image"
         )
