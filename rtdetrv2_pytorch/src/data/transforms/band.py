@@ -50,7 +50,7 @@ class RandomBandCrop(T.Transform):
         self.jitter_rows = jitter_rows
         self.jitter_cols = jitter_cols
 
-    def make_params(self, flat_inputs):
+    def _get_params(self, flat_inputs):
         strip_height, strip_width = F.get_size(flat_inputs[0])
 
         travel = strip_height - self.height
@@ -67,7 +67,7 @@ class RandomBandCrop(T.Transform):
 
         return {"top": top, "left": left, "height": height, "width": width}
 
-    def transform(self, inpt, params):
+    def _transform(self, inpt, params):
         return F.crop(inpt, **params)
 
 
@@ -85,10 +85,10 @@ class CenterBandCrop(T.Transform):
         super().__init__()
         self.height = height
 
-    def make_params(self, flat_inputs):
+    def _get_params(self, flat_inputs):
         strip_height, strip_width = F.get_size(flat_inputs[0])
         top, height = _window(strip_height, self.height, (strip_height - self.height) // 2)
         return {"top": top, "left": 0, "height": height, "width": strip_width}
 
-    def transform(self, inpt, params):
+    def _transform(self, inpt, params):
         return F.crop(inpt, **params)
