@@ -1,4 +1,8 @@
-"""Horizon recall: a detection metric for targets whose difficulty is their apparent size.
+"""Recall of distant targets, bucketed by apparent width.
+
+**This has nothing to do with the horizon.** It never looks at where the horizon is, uses no
+INS or geopose, and works the same on imagery with no horizon in it. The horizon band detector
+happens to be the model that needed it first; the metric applies to any detector.
 
 **Why the COCO metrics do not serve this case.** COCO buckets ground truth by *area*, with
 "small" meaning under 32x32 = 1024 px². On maritime horizon data that bucket holds 89 % of all
@@ -54,8 +58,8 @@ DEFAULT_SCORE = 0.25
 
 
 @dataclass(frozen=True)
-class HorizonRecall:
-    """Recall over the contested width band, plus what it cost to get there."""
+class DistantTargetRecall:
+    """Recall over the contested width range, plus what it cost to get there."""
 
     matched: int
     total: int
@@ -86,13 +90,13 @@ def iou(a: list[float], b: list[float]) -> float:
     return intersection / union if union > 0 else 0.0
 
 
-def horizon_recall(
+def distant_target_recall(
     ground_truth: dict[int, list[list[float]]],
     predictions: dict[int, list[list[float]]],
     width_range: tuple[float, float] = CONTESTED_WIDTH_PX,
     iou_threshold: float = DEFAULT_IOU,
     score_threshold: float = DEFAULT_SCORE,
-) -> HorizonRecall:
+) -> DistantTargetRecall:
     """Recall over ground truth whose width falls in *width_range*.
 
     Both mappings are image id to a list of xyxy boxes in the same coordinate frame. The
@@ -111,7 +115,7 @@ def horizon_recall(
                 matched += 1
 
     images = max(1, len(ground_truth))
-    return HorizonRecall(
+    return DistantTargetRecall(
         matched=matched,
         total=total,
         boxes_per_image=sum(len(v) for v in predictions.values()) / images,
@@ -121,7 +125,7 @@ def horizon_recall(
     )
 
 
-def better(candidate: HorizonRecall, incumbent: HorizonRecall, box_tolerance: float = 1.15) -> bool:
+def better(candidate: DistantTargetRecall, incumbent: DistantTargetRecall, box_tolerance: float = 1.15) -> bool:
     """Is *candidate* the better model to keep?
 
     Higher recall wins, but only if it did not buy that recall by flooding the frame. A
@@ -137,7 +141,7 @@ def better(candidate: HorizonRecall, incumbent: HorizonRecall, box_tolerance: fl
     return candidate.recall > incumbent.recall
 
 
-class HorizonAccumulator:
+class DistantTargetAccumulator:
     """Collects predictions across an evaluation pass and scores them at the end.
 
     Lives in RT-DETR rather than in visionai because the training loop needs it every epoch,
@@ -159,7 +163,7 @@ class HorizonAccumulator:
             keep = scores >= self.score_threshold
             self.predictions[int(image_id)] = boxes[keep].tolist()
 
-    def summarize(self) -> HorizonRecall:
+    def summarize(self) -> DistantTargetRecall:
         ground_truth = {}
         for image_id in self.predictions:
             annotations = self.coco_gt.loadAnns(self.coco_gt.getAnnIds(imgIds=image_id))
@@ -169,7 +173,7 @@ class HorizonAccumulator:
                 if not a.get("iscrowd", 0)
             ]
         self._ground_truth = ground_truth
-        return horizon_recall(
+        return distant_target_recall(
             ground_truth,
             self.predictions,
             width_range=self.width_range,

@@ -15,28 +15,28 @@ from .det_engine import train_one_epoch, evaluate
 
 class DetSolver(BaseSolver):
     
-    def _new_horizon_accumulator(self):
-        """A fresh horizon-recall accumulator per epoch, or None when not configured.
+    def _new_distant_accumulator(self):
+        """A fresh distant-target accumulator per epoch, or None when not configured.
 
-        Opt-in through `horizon_metric` in the config, so every existing model is untouched:
+        Opt-in through `distant_target_metric` in the config, so every existing model is untouched:
 
-            horizon_metric:
+            distant_target_metric:
               width_range: [4, 12]     # apparent width in source px, the contested band
               iou_threshold: 0.3       # loose: finding it matters, the tracker refines it
               score_threshold: 0.25    # must match the deployed operating point
         """
-        config = self.cfg.yaml_cfg.get('horizon_metric')
+        config = self.cfg.yaml_cfg.get('distant_target_metric')
         if not config:
             return None
 
-        from ..misc.horizon_metric import (
+        from ..misc.distant_target_metric import (
             CONTESTED_WIDTH_PX,
             DEFAULT_IOU,
             DEFAULT_SCORE,
-            HorizonAccumulator,
+            DistantTargetAccumulator,
         )
 
-        return HorizonAccumulator(
+        return DistantTargetAccumulator(
             self.val_dataloader.dataset.coco,
             width_range=config.get('width_range', CONTESTED_WIDTH_PX),
             iou_threshold=config.get('iou_threshold', DEFAULT_IOU),
@@ -102,12 +102,12 @@ class DetSolver(BaseSolver):
                 self.val_dataloader, 
                 self.evaluator, 
                 self.device,
-                horizon_accumulator=self._new_horizon_accumulator(),
+                distant_accumulator=self._new_distant_accumulator(),
             )
 
             # TODO 
             # Which metric decides best.pth. Defaults to COCO AP, so existing configs are
-            # unchanged. A band model can set `checkpoint_metric: horizon_recall` instead,
+            # unchanged. A band model can set `checkpoint_metric: distant_target_recall` instead,
             # because aggregate AP is not what it is judged on.
             selection_metric = self.cfg.yaml_cfg.get('checkpoint_metric', 'coco_eval_bbox')
             for k in test_stats:

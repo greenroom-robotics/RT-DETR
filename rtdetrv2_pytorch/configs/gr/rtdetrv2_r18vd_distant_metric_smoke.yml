@@ -145,11 +145,11 @@ lr_warmup_scheduler:
 # Recall of targets in the contested apparent-width band, at the deployed operating point.
 # COCO's size buckets are areas and cannot express distance, so this is what a band model
 # should be selected on.
-horizon_metric:
+distant_target_metric:
   width_range: [4, 12]
   iou_threshold: 0.3
   score_threshold: 0.25
 
-checkpoint_metric: horizon_recall
+checkpoint_metric: distant_target_recall
 
 eval_spatial_size: [320, 2560]
