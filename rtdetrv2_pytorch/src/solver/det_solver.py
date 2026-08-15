@@ -55,6 +55,8 @@ class DetSolver(BaseSolver):
         print(f'number of trainable parameters: {n_parameters}')
 
         best_stat = {'epoch': -1, }
+        # Tracked separately from best_stat, which every metric writes to.
+        self._best_selection_value = float('-inf')
 
         start_time = time.time()
         start_epcoch = self.last_epoch + 1
@@ -109,29 +111,37 @@ class DetSolver(BaseSolver):
             # Which metric decides best.pth. Defaults to COCO AP, so existing configs are
             # unchanged. A band model can set `checkpoint_metric: distant_target_recall` instead,
             # because aggregate AP is not what it is judged on.
+            # `checkpoint_metric` names the ONE metric that decides best.pth. Everything else is
+            # tracked for reporting only.
+            #
+            # The decision cannot be made inside the loop below. `best_stat['epoch']` is shared
+            # across every metric, so an improvement in coco_eval_bbox sets it to this epoch and
+            # any later key then reads a contaminated value. That silently saved a WORSE
+            # checkpoint: distant_target_recall fell from 0.939 to 0.934 and best.pth was
+            # written anyway, because AP had improved on the same epoch.
             selection_metric = self.cfg.yaml_cfg.get('checkpoint_metric', 'coco_eval_bbox')
             for k in test_stats:
                 if self.writer and dist_utils.is_main_process():
                     for i, v in enumerate(test_stats[k]):
                         self.writer.add_scalar(f'Test/{k}_{i}'.format(k), v, epoch)
-            
-                if k in best_stat:
-                    best_stat['epoch'] = epoch if test_stats[k][0] > best_stat[k] else best_stat['epoch']
-                    best_stat[k] = max(best_stat[k], test_stats[k][0])
-                else:
+
+                best_stat[k] = (
+                    max(best_stat[k], test_stats[k][0]) if k in best_stat else test_stats[k][0]
+                )
+
+            if selection_metric in test_stats:
+                value = test_stats[selection_metric][0]
+                if value > self._best_selection_value:
+                    self._best_selection_value = value
                     best_stat['epoch'] = epoch
-                    best_stat[k] = test_stats[k][0]
-
-                # Only the metric named by `checkpoint_metric` decides best.pth. Without this,
-                # whichever key the loop happened to visit last would decide it, which is a
-                # silent dependency on dict ordering once a second metric exists.
-                if k != selection_metric:
-                    continue
-
-                if best_stat['epoch'] == epoch and self.output_dir:
-                    dist_utils.save_on_master(self.state_dict(), self.output_dir / 'best.pth')
-                    print(f"saved best.pth at epoch {epoch} on {selection_metric}"
-                          f"={test_stats[k][0]:.4f}")
+                    if self.output_dir:
+                        dist_utils.save_on_master(
+                            self.state_dict(), self.output_dir / 'best.pth'
+                        )
+                        print(
+                            f"saved best.pth at epoch {epoch} on "
+                            f"{selection_metric}={value:.4f}"
+                        )
 
             print(f'best_stat: {best_stat}')
 
