@@ -15,6 +15,34 @@ from .det_engine import train_one_epoch, evaluate
 
 class DetSolver(BaseSolver):
     
+    def _new_horizon_accumulator(self):
+        """A fresh horizon-recall accumulator per epoch, or None when not configured.
+
+        Opt-in through `horizon_metric` in the config, so every existing model is untouched:
+
+            horizon_metric:
+              width_range: [4, 12]     # apparent width in source px, the contested band
+              iou_threshold: 0.3       # loose: finding it matters, the tracker refines it
+              score_threshold: 0.25    # must match the deployed operating point
+        """
+        config = self.cfg.yaml_cfg.get('horizon_metric')
+        if not config:
+            return None
+
+        from ..misc.horizon_metric import (
+            CONTESTED_WIDTH_PX,
+            DEFAULT_IOU,
+            DEFAULT_SCORE,
+            HorizonAccumulator,
+        )
+
+        return HorizonAccumulator(
+            self.val_dataloader.dataset.coco,
+            width_range=config.get('width_range', CONTESTED_WIDTH_PX),
+            iou_threshold=config.get('iou_threshold', DEFAULT_IOU),
+            score_threshold=config.get('score_threshold', DEFAULT_SCORE),
+        )
+
     def fit(self, ):
         print("Start training")
         self.train()
@@ -73,10 +101,15 @@ class DetSolver(BaseSolver):
                 self.postprocessor, 
                 self.val_dataloader, 
                 self.evaluator, 
-                self.device
+                self.device,
+                horizon_accumulator=self._new_horizon_accumulator(),
             )
 
             # TODO 
+            # Which metric decides best.pth. Defaults to COCO AP, so existing configs are
+            # unchanged. A band model can set `checkpoint_metric: horizon_recall` instead,
+            # because aggregate AP is not what it is judged on.
+            selection_metric = self.cfg.yaml_cfg.get('checkpoint_metric', 'coco_eval_bbox')
             for k in test_stats:
                 if self.writer and dist_utils.is_main_process():
                     for i, v in enumerate(test_stats[k]):
@@ -89,8 +122,16 @@ class DetSolver(BaseSolver):
                     best_stat['epoch'] = epoch
                     best_stat[k] = test_stats[k][0]
 
+                # Only the metric named by `checkpoint_metric` decides best.pth. Without this,
+                # whichever key the loop happened to visit last would decide it, which is a
+                # silent dependency on dict ordering once a second metric exists.
+                if k != selection_metric:
+                    continue
+
                 if best_stat['epoch'] == epoch and self.output_dir:
                     dist_utils.save_on_master(self.state_dict(), self.output_dir / 'best.pth')
+                    print(f"saved best.pth at epoch {epoch} on {selection_metric}"
+                          f"={test_stats[k][0]:.4f}")
 
             print(f'best_stat: {best_stat}')
 

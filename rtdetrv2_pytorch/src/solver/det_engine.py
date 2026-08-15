@@ -104,7 +104,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
 
 
 @torch.no_grad()
-def evaluate(model: torch.nn.Module, criterion: torch.nn.Module, postprocessor, data_loader, coco_evaluator: CocoEvaluator, device):
+def evaluate(model: torch.nn.Module, criterion: torch.nn.Module, postprocessor, data_loader, coco_evaluator: CocoEvaluator, device, horizon_accumulator=None):
     model.eval()
     criterion.eval()
     coco_evaluator.cleanup()
@@ -139,6 +139,8 @@ def evaluate(model: torch.nn.Module, criterion: torch.nn.Module, postprocessor, 
         res = {target['image_id'].item(): output for target, output in zip(targets, results)}
         if coco_evaluator is not None:
             coco_evaluator.update(res)
+        if horizon_accumulator is not None:
+            horizon_accumulator.update(res)
 
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
@@ -158,7 +160,16 @@ def evaluate(model: torch.nn.Module, criterion: torch.nn.Module, postprocessor, 
             stats['coco_eval_bbox'] = coco_evaluator.coco_eval['bbox'].stats.tolist()
         if 'segm' in iou_types:
             stats['coco_eval_masks'] = coco_evaluator.coco_eval['segm'].stats.tolist()
-            
+
+    if horizon_accumulator is not None:
+        # Recall of targets in the contested apparent-width band, at a usable confidence. COCO's
+        # size buckets are areas and cannot express "distant", so this is reported alongside
+        # rather than instead. A list, so it matches the shape det_solver expects.
+        result = horizon_accumulator.summarize()
+        print(f' {result}')
+        print(horizon_accumulator.ladder())
+        stats['horizon_recall'] = [result.recall, result.boxes_per_image, float(result.total)]
+
     return stats, coco_evaluator
 
 
