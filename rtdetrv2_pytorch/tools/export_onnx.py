@@ -113,10 +113,12 @@ def main(
         input_names=["images", "orig_target_sizes"],
         output_names=["labels", "boxes", "scores"],
         dynamic_axes=dynamic_axes,
-        # 18, not 16. onnxsim fails to simplify the opset-16 graph
-        # ("Input /postprocessor/Concat_6_output_0 is undefined!"), and an unsimplified graph
-        # still carries the ops TensorRT would rather not see.
-        opset_version=18,
+        # Stays at 16. Opset 18 was tried, because magnusm/export-half-res moved to it, and it
+        # does NOT fix the onnxsim failure here: that branch also needs torch>=2.8, and this
+        # one pins 2.4. Every deployed model was exported at 16, so do not change it for a
+        # cosmetic gain. TensorRT folds and fuses the graph itself at build time, so an
+        # unsimplified ONNX costs essentially nothing at inference.
+        opset_version=16,
         verbose=False,
         do_constant_folding=True,
     )
