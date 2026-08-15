@@ -4,6 +4,24 @@
 INS or geopose, and works the same on imagery with no horizon in it. The horizon band detector
 happens to be the model that needed it first; the metric applies to any detector.
 
+**How much of this is just COCO reconfigured?** Most of it, and the honest accounting is:
+
+============================  ==================================================
+difference                    available in pycocotools?
+============================  ==================================================
+score threshold at the        **No.** ``AP`` builds a PR curve over all
+deployment operating point    detections and ``AR`` takes the top 100
+                              unthresholded. Neither scores where the pipeline
+                              actually runs. This is the difference that matters.
+single loose IoU of 0.3       Yes, ``params.iouThrs``
+bucket by width, not area     Mostly, ``params.areaRng`` gets close
+============================  ==================================================
+
+Measured on the band validation set, width and sqrt(area) correlate at Spearman 0.93 and the
+4-12 selection band overlaps 84.7 % between them, because the median box is nearly square
+(aspect 0.89). **The width axis is a refinement, not the substance.** The substance is that
+recall is measured at a usable confidence.
+
 **Why the COCO metrics do not serve this case.** COCO buckets ground truth by *area*, with
 "small" meaning under 32x32 = 1024 px². On maritime horizon data that bucket holds 89 % of all
 boxes, so `AP_small` is a near-duplicate of `AP_all` and carries no information about range. It
