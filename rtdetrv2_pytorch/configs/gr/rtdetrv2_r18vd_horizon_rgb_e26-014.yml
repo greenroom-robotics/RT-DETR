@@ -70,7 +70,10 @@ train_dataloader:
   collate_fn:
     type: BatchImageCollateFuncion
     scales: ~   # multi-scale is another scale changer, and it lives outside `transforms`
-  total_batch_size: 12
+  # 8, not 12. gr-sim-sydney's GPU is shared, and a perception_eval run holds ~2.7 GB of the
+  # 16 GB. At 12 this run took 10.0 GB and left only 3.4 GB free, which validation at a larger
+  # batch would have eaten. 8 leaves room for the other job.
+  total_batch_size: 8
   shuffle: True
   num_workers: 4
   drop_last: True
@@ -88,7 +91,7 @@ val_dataloader:
         # Deterministic, so a score is comparable between epochs and between runs.
         - {type: CenterBandCrop, height: 320}
         - {type: ConvertPILImage, dtype: 'float32', scale: True}
-  total_batch_size: 16
+  total_batch_size: 8
   shuffle: False
   num_workers: 4
   drop_last: False
