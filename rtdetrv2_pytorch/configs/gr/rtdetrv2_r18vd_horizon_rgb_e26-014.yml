@@ -45,8 +45,8 @@ train_dataloader:
   type: DataLoader
   dataset:
     type: CocoDetection
-    img_folder: /home/ros/visionai_platform/scratchpad/e26-014-horizon-band
-    ann_file: /home/ros/visionai_platform/scratchpad/e26-014-horizon-band/coco_labels/split_train.mapped.json
+    img_folder: /mnt/lakefs/datasets/eo/experiments/e26-014-d26-006-horizon-band-poc
+    ann_file: /mnt/lakefs/datasets/eo/experiments/e26-014-d26-006-horizon-band-poc/coco_labels/split_train.mapped.json
     return_masks: False
     transforms:
       type: Compose
@@ -79,8 +79,8 @@ val_dataloader:
   type: DataLoader
   dataset:
     type: CocoDetection
-    img_folder: /home/ros/visionai_platform/scratchpad/e26-014-horizon-band
-    ann_file: /home/ros/visionai_platform/scratchpad/e26-014-horizon-band/coco_labels/split_test.mapped.json
+    img_folder: /mnt/lakefs/datasets/eo/experiments/e26-014-d26-006-horizon-band-poc
+    ann_file: /mnt/lakefs/datasets/eo/experiments/e26-014-d26-006-horizon-band-poc/coco_labels/split_test.mapped.json
     return_masks: False
     transforms:
       type: Compose
