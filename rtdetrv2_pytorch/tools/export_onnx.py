@@ -34,11 +34,25 @@ def get_modality(config_path):
     return "unknown"
 
 
+def parse_input_size(input_size):
+    """Network input as (height, width).
+
+    One value is a square model, two are height then width, in the same order as
+    ``eval_spatial_size``. A rectangular model exists for the horizon band, which is wide and
+    short, so a single number cannot describe it.
+    """
+    if len(input_size) == 1:
+        return input_size[0], input_size[0]
+    if len(input_size) == 2:
+        return input_size[0], input_size[1]
+    raise ValueError(f"--input_size takes one or two values, got {input_size}")
+
+
 def main(
     args,
 ):
     """main"""
-    resize_h, resize_w = (args.input_size, args.input_size)
+    resize_h, resize_w = parse_input_size(args.input_size)
 
     update_dict = {k: v for k, v in args.__dict__.items() if v is not None}
     update_dict["eval_spatial_size"] = [resize_h, resize_w]
@@ -159,7 +173,13 @@ if __name__ == "__main__":
     parser.add_argument("--resume", "-r", type=str)
     parser.add_argument("--output_file", "-o", type=str, default="model.onnx")
     parser.add_argument(
-        "--input_size", "-s", type=int, default=1280, help="-s 640 for IR, -s 1280 for RGB"
+        "--input_size",
+        "-s",
+        type=int,
+        nargs="+",
+        default=[1280],
+        help="Network input. One value for a square model (-s 640 for IR, -s 1280 for RGB), "
+        "or height then width for a rectangular one (-s 320 2560 for the horizon band).",
     )
     parser.add_argument(
         "--image_channels",

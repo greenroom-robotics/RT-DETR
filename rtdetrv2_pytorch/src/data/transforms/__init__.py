@@ -16,5 +16,6 @@ from ._transforms import (
     ConvertBoxes,
     ConvertPILImage,
 )
+from .band import CenterBandCrop, RandomBandCrop
 from .container import Compose
 from .mosaic import Mosaic
