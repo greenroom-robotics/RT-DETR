@@ -144,7 +144,7 @@ def distant_target_recall(
     for the record so a reported number always states the operating point it belongs to.
     """
     low, high = width_range
-    matched = total = 0
+    matched = total = predicted_in_range = predicted_matching = 0
     for image_id, boxes in ground_truth.items():
         found = predictions.get(image_id, [])
         for box in boxes:
@@ -153,11 +153,20 @@ def distant_target_recall(
             total += 1
             if any(iou(box, candidate) >= iou_threshold for candidate in found):
                 matched += 1
+        # Precision over the same width range, so recall cannot be bought with false positives.
+        for candidate in found:
+            if not low <= candidate[2] - candidate[0] < high:
+                continue
+            predicted_in_range += 1
+            if any(iou(box, candidate) >= iou_threshold for box in boxes):
+                predicted_matching += 1
 
     images = max(1, len(ground_truth))
     return DistantTargetRecall(
         matched=matched,
         total=total,
+        predicted_in_range=predicted_in_range,
+        predicted_matching=predicted_matching,
         boxes_per_image=sum(len(v) for v in predictions.values()) / images,
         width_range=width_range,
         iou_threshold=iou_threshold,
