@@ -113,7 +113,10 @@ def main(
         input_names=["images", "orig_target_sizes"],
         output_names=["labels", "boxes", "scores"],
         dynamic_axes=dynamic_axes,
-        opset_version=16,
+        # 18, not 16. onnxsim fails to simplify the opset-16 graph
+        # ("Input /postprocessor/Concat_6_output_0 is undefined!"), and an unsimplified graph
+        # still carries the ops TensorRT would rather not see.
+        opset_version=18,
         verbose=False,
         do_constant_folding=True,
     )
