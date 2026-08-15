@@ -105,6 +105,9 @@ val_dataloader:
     transforms:
       type: Compose
       ops:
+        # The control resizes, exactly as the baseline does. Without this the loader feeds raw
+        # 2560x1280 to a model built for 1280x1280 and the encoder dies on 3200 tokens vs 1600.
+        - {type: Resize, size: [1280, 1280]}
         - {type: ConvertPILImage, dtype: 'float32', scale: True}
   total_batch_size: 8
   shuffle: False
