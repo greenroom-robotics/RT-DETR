@@ -91,7 +91,11 @@ def main(
     model = Model()
 
     data = torch.rand(1, args.image_channels, resize_h, resize_w)
-    size = torch.tensor([[resize_h, resize_w]])
+    # (width, height), NOT (height, width). The postprocessor does
+    #     bbox_pred *= orig_target_sizes.repeat(1, 2)
+    # on xyxy boxes, so the FIRST element scales x. Square models hide the swap; a
+    # rectangular one puts every box in the wrong place.
+    size = torch.tensor([[resize_w, resize_h]])
     _ = model(data, size)
 
     # Enable dynamic batch size
@@ -129,12 +133,19 @@ def main(
         print("Check export onnx model done...")
 
     if args.simplify:
-        onnx_model_simplify, check = onnxsim.simplify(args.output_file)
-        onnx.save(onnx_model_simplify, args.output_file)
-        print(f"Successfully simplified onnx model: {check}...")
+        # Simplification is an optimisation, not a correctness step, and onnxsim fails on some
+        # exported graphs ("Input /postprocessor/Concat_6_output_0 is undefined!"). Letting it
+        # raise here used to skip --fix_dimensions, which nvinfer REQUIRES: it refuses a model
+        # with a second, non-image input. Never let the optional step block the required one.
+        try:
+            onnx_model_simplify, check = onnxsim.simplify(args.output_file)
+            onnx.save(onnx_model_simplify, args.output_file)
+            print(f"Successfully simplified onnx model: {check}...")
+        except Exception as error:
+            print(f"WARNING: onnx simplification failed, keeping the unsimplified model: {error}")
 
     if args.fix_dimensions:
-        constant_value = np.array([[resize_h, resize_w]], dtype=np.int64)
+        constant_value = np.array([[resize_w, resize_h]], dtype=np.int64)  # (w, h), see above
         const_input(args.output_file, "orig_target_sizes", constant_value)
 
 
@@ -155,13 +166,17 @@ def const_input(model_path, input_name, constant_value):
     del model.graph.input[:]
     model.graph.input.extend(inputs_to_keep)
 
-    model_simplified, check = onnxsim.simplify(model)
+    try:
+        model_simplified, check = onnxsim.simplify(model)
+    except Exception as error:
+        print(f"WARNING: simplification failed after fixing the input: {error}")
+        check = False
 
     if check:
         onnx.save(model_simplified, model_path)
         print(f"Simplified model saved to {model_path}")
     else:
-        print("Simplification failed, saving original modification")
+        print("Saving the model with the input fixed but not simplified")
         onnx.save(model, model_path)
 
 
