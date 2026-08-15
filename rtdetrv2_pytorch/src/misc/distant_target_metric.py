@@ -93,7 +93,7 @@ class DistantTargetRecall:
     def __str__(self) -> str:
         low, high = self.width_range
         return (
-            f"horizon recall {100 * self.recall:.1f}% ({self.matched}/{self.total}) "
+            f"distant target recall {100 * self.recall:.1f}% ({self.matched}/{self.total}) "
             f"for {low:.0f}-{high:.0f} px wide, IoU>={self.iou_threshold}, "
             f"score>={self.score_threshold}, {self.boxes_per_image:.2f} boxes/image"
         )
