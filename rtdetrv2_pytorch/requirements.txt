@@ -1,6 +1,8 @@
 # General
-torch==2.4.*
-torchvision==0.19.*
+# 2.8 is the first torch with sm_120 kernels (RTX 50 series, Blackwell). 2.9+ defaults
+# torch.onnx.export to the dynamo exporter, which breaks things.
+torch>=2.8,<2.9
+torchvision>=0.23,<0.24
 pycocotools
 PyYAML
 tensorboard
