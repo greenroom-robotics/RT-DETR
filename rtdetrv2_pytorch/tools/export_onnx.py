@@ -23,15 +23,19 @@ def add_meta(onnx_model, key, value):
     meta.key = key
     meta.value = value
 
-
-def get_modality(config_path):
+def get_modality(config_path, override=None):
+    if override:
+        return override
     name = os.path.splitext(os.path.basename(config_path))[0]
     tokens = name.split("_")
     if "rgb" in tokens:
         return "rgb"
     if "ir" in tokens:
         return "ir"
-    return "unknown"
+    raise ValueError(
+        f"Cannot infer modality from config filename {name!r}. "
+        "Pass --modality rgb|ir, or name the config with an `rgb`/`ir` token."
+    )
 
 
 def main(
@@ -106,7 +110,7 @@ def main(
     add_meta(onnx_model, key="classes", value=json.dumps(classes))
     add_meta(onnx_model, key="model", value="RT-DETR")
     add_meta(onnx_model, key="input_shape", value=json.dumps((resize_h, resize_w)))
-    add_meta(onnx_model, key="modality", value=get_modality(args.config))
+    add_meta(onnx_model, key="modality", value=get_modality(args.config, args.modality))
     onnx.save(onnx_model, args.output_file)
 
     if args.check:
@@ -179,6 +183,7 @@ if __name__ == "__main__":
         default=False,
     )
     parser.add_argument("--fix_dimensions", action="store_true", default=False)
+    parser.add_argument("--modality", type=str, default=None, choices=["rgb", "ir"])
     args = parser.parse_args()
 
     main(args)
