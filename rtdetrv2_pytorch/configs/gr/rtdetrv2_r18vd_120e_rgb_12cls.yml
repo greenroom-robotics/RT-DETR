@@ -32,8 +32,8 @@ train_dataloader:
       policy:
         epoch: 117
   collate_fn:
-    type: BatchImageCollateFuncion  
-    scales: ~
+    type: BatchImageCollateFuncion
+    scales: [640, 640, 704, 768, 832, 896, 960, 1024, 1088, 1152, 1216, 1280, 1280]
   total_batch_size: 6
   shuffle: True
   num_workers: 4
