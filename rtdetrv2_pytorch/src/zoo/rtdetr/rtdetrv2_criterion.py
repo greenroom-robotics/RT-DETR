@@ -32,7 +32,8 @@ class RTDETRCriterionv2(nn.Module):
         gamma=2.0, 
         num_classes=80, 
         boxes_weight_format=None,
-        share_matched_indices=False):
+        share_matched_indices=False,
+        obj_alpha=None):
         """Create the criterion.
         Parameters:
             matcher: module able to compute a matching between targets and proposals
@@ -41,6 +42,8 @@ class RTDETRCriterionv2(nn.Module):
             eos_coef: relative classification weight applied to the no-object category
             losses: list of all the losses to be applied. See get_loss for list of available losses.
             boxes_weight_format: format for boxes weight (iou, )
+            obj_alpha: focal alpha for the objectness loss. Defaults to `alpha`, which is tuned
+                for VFL (0.75); plain focal on a single logit conventionally uses 0.25.
         """
         super().__init__()
         self.num_classes = num_classes
@@ -51,6 +54,7 @@ class RTDETRCriterionv2(nn.Module):
         self.share_matched_indices = share_matched_indices
         self.alpha = alpha
         self.gamma = gamma
+        self.obj_alpha = alpha if obj_alpha is None else obj_alpha
 
     def loss_labels_focal(self, outputs, targets, indices, num_boxes):
         assert 'pred_logits' in outputs
@@ -95,6 +99,22 @@ class RTDETRCriterionv2(nn.Module):
         loss = loss.mean(1).sum() * src_logits.shape[1] / num_boxes
         return {'loss_vfl': loss}
 
+    def loss_objectness(self, outputs, targets, indices, num_boxes):
+        """Class-agnostic existence on the dedicated objectness head.
+
+        Every matched query is a positive at exactly 1.0, whatever its box IoU, and every
+        other query is a negative, so the logit answers "is anything here" rather than
+        "how good is the box" (VFL) or "which class" (the class logits).
+        """
+        assert 'pred_obj' in outputs
+        src_obj = outputs['pred_obj']  # [B, Q, 1]
+        idx = self._get_src_permutation_idx(indices)
+        target = torch.zeros_like(src_obj)
+        target[idx] = 1.0
+        loss = torchvision.ops.sigmoid_focal_loss(src_obj, target, self.obj_alpha, self.gamma, reduction='none')
+        loss = loss.mean(1).sum() * src_obj.shape[1] / num_boxes
+        return {'loss_obj': loss}
+
     def loss_boxes(self, outputs, targets, indices, num_boxes, boxes_weight=None):
         """Compute the losses related to the bounding boxes, the L1 regression loss and the GIoU loss
            targets dicts must contain the key "boxes" containing a tensor of dim [nb_target_boxes, 4]
@@ -132,6 +152,7 @@ class RTDETRCriterionv2(nn.Module):
             'boxes': self.loss_boxes,
             'focal': self.loss_labels_focal,
             'vfl': self.loss_labels_vfl,
+            'objectness': self.loss_objectness,
         }
         assert loss in loss_map, f'do you really want to compute {loss} loss?'
         return loss_map[loss](outputs, targets, indices, num_boxes, **kwargs)
@@ -207,6 +228,9 @@ class RTDETRCriterionv2(nn.Module):
                 matched = self.matcher(aux_outputs, targets)
                 indices = matched['indices']
                 for loss in self.losses:
+                    if loss == 'objectness' and 'pred_obj' not in aux_outputs:
+                        # The encoder has no objectness head; only decoder layers are supervised.
+                        continue
                     meta = self.get_loss_meta_info(loss, aux_outputs, enc_targets, indices)
                     l_dict = self.get_loss(loss, aux_outputs, enc_targets, indices, num_boxes, **meta)
                     l_dict = {k: l_dict[k] * self.weight_dict[k] for k in l_dict if k in self.weight_dict}

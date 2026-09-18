@@ -72,7 +72,7 @@ def inference(image_paths, id2cat):
         with torch.no_grad():
             start_time = time.time()
             output = model(img, size)
-            labels, boxes, scores = output # (Batch, Preds)
+            labels, boxes, scores, objectness = output # (Batch, Preds)
 
             # Batch size = 1
             scr = scores[0].cpu().numpy()
@@ -82,7 +82,9 @@ def inference(image_paths, id2cat):
                 lab = np.array([id2cat[l] for l in labels[0].cpu().numpy()])
             box = boxes[0].cpu().numpy()
 
-            outputs.append({"scores": scr, "labels": lab, "boxes": box})
+            obj = objectness[0].cpu().numpy()
+
+            outputs.append({"scores": scr, "labels": lab, "boxes": box, "objectness": obj})
             inf_times.append(time.time() - start_time)
     
     fps = 1/np.mean(inf_times)
