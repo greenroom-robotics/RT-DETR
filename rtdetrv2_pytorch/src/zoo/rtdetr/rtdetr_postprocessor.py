@@ -58,10 +58,6 @@ class RTDETRPostProcessor(nn.Module):
 
             # Ignore 0-th index (see above comment)
             scores = F.sigmoid(logits[:,:,1:])
-            
-            # # This gives duplicate indices after integer division
-            # scores, index = torch.topk(scores.flatten(1), self.num_top_queries, dim=-1)
-            # index = index // (self.num_classes - 1)
 
             ## remove duplicate indices
             scores, index = torch.topk(scores.max(-1).values, self.num_top_queries, dim=-1)
@@ -71,27 +67,37 @@ class RTDETRPostProcessor(nn.Module):
             labels = soft_labels.gather(dim=1, index=index.unsqueeze(-1).tile(1, 1, soft_labels.shape[-1]))
             boxes = bbox_pred.gather(dim=1, index=index.unsqueeze(-1).tile(1, 1, boxes.shape[-1]))
 
+            # Existence from the dedicated objectness head
+            objectness = F.sigmoid(outputs['pred_obj']).squeeze(-1).gather(dim=1, index=index)
+
         else:
             if self.use_focal_loss:
-                scores = F.sigmoid(logits)
-                scores, index = torch.topk(scores.flatten(1), self.num_top_queries, dim=-1)
-                # TODO for older tensorrt
-                # labels = index % self.num_classes
-                labels = mod(index, self.num_classes) # this will never index the 0-th score since the 0-th score is always near zero for a trained model
-                index = index // self.num_classes
+                # det_engine.evaluate never calls postprocessor.eval(), so in-training COCO
+                # validation runs this branch. Select rows exactly as the deploy branch above
+                # does (one row per query, ranked by the class max) so val mAP measures the
+                # graph that ships. Only the label shape differs: COCO needs an int id here,
+                # the ONNX carries the soft distribution. Class 0 is the dead slot, hence the
+                # slice and the +1.
+                class_scores = F.sigmoid(logits[:, :, 1:])
+                per_query, labels = class_scores.max(-1)
+                scores, index = torch.topk(per_query, self.num_top_queries, dim=-1)
+                labels = labels.gather(dim=1, index=index) + 1
                 boxes = bbox_pred.gather(dim=1, index=index.unsqueeze(-1).repeat(1, 1, bbox_pred.shape[-1]))
+                objectness = F.sigmoid(outputs['pred_obj']).squeeze(-1).gather(dim=1, index=index)
                 
             else:
                 scores = F.softmax(logits)[:, :, :-1]
                 scores, labels = scores.max(dim=-1)
+                objectness = F.sigmoid(outputs['pred_obj']).squeeze(-1)
                 if scores.shape[1] > self.num_top_queries:
                     scores, index = torch.topk(scores, self.num_top_queries, dim=-1)
                     labels = torch.gather(labels, dim=1, index=index)
                     boxes = torch.gather(boxes, dim=1, index=index.unsqueeze(-1).tile(1, 1, boxes.shape[-1]))
+                    objectness = torch.gather(objectness, dim=1, index=index)
     
         # TODO for onnx export
         if self.deploy_mode:
-            return labels, boxes, scores
+            return labels, boxes, scores, objectness
 
         # TODO
         if self.remap_mscoco_category:
@@ -100,8 +106,8 @@ class RTDETRPostProcessor(nn.Module):
                 .to(boxes.device).reshape(labels.shape)
 
         results = []
-        for lab, box, sco in zip(labels, boxes, scores):
-            result = dict(labels=lab, boxes=box, scores=sco)
+        for lab, box, sco, obj in zip(labels, boxes, scores, objectness):
+            result = dict(labels=lab, boxes=box, scores=sco, objectness=obj)
             results.append(result)
         
         return results
