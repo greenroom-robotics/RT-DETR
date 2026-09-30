@@ -7,7 +7,7 @@ __include__: [
 ]
 
 
-num_classes: 5 # Has to be actual number of classes + 1
+num_classes: 4 # Has to be actual number of classes + 1
 epoches: 120
 
 train_dataloader: 
