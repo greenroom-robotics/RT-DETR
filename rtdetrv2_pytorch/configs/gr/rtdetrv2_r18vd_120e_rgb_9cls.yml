@@ -7,7 +7,7 @@ __include__: [
 ]
 
 
-num_classes: 13 # Has to be actual number of classes + 1
+num_classes: 10 # Has to be actual number of classes + 1 (map_9cls.yaml)
 epoches: 120
 
 train_dataloader: 
