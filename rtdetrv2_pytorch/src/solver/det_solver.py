@@ -45,6 +45,28 @@ class DetSolver(BaseSolver):
               f'next to {self.cfg.resume}. best.pth will only cover the resumed epochs.')
         es.best_map, es.best_epoch = float('-inf'), -1
 
+    def _stop_epoch_policy(self, ):
+        transforms = getattr(self.train_dataloader.dataset, '_transforms', None)
+        policy = getattr(transforms, 'policy', None) or {}
+        return (transforms, policy) if policy.get('name') == 'stop_epoch' else (None, {})
+
+    def _turn_off_augmentation(self, from_epoch):
+        transforms, policy = self._stop_epoch_policy()
+        if not policy or from_epoch >= policy['epoch']:
+            return False
+        transforms.policy = {**policy, 'epoch': from_epoch}
+        return True
+
+    def _begin_finish(self, epoch):
+        es = self.early_stopping
+        _, policy = self._stop_epoch_policy()
+        clean_epochs = max(self.cfg.epoches - policy['epoch'], 0) if policy else 0
+        es.finish_until = min(epoch + clean_epochs, self.cfg.epoches - 1)
+        if es.finish_until > epoch and self._turn_off_augmentation(epoch + 1):
+            es.aug_off_epoch = epoch + 1
+        aug_off = f'augmentation off from epoch {es.aug_off_epoch}, ' if es.aug_off_epoch is not None else ''
+        print(f'Patience ran out at epoch {epoch}: {aug_off}stopping after epoch {es.finish_until}')
+
     def _write_early_stopping_summary(self, ):
         if not (self.output_dir and dist_utils.is_main_process()):
             return
@@ -58,6 +80,7 @@ class DetSolver(BaseSolver):
             'stopped_epoch': self.last_epoch,
             'best_epoch': es.best_epoch,
             'best_map': es.best_map if es.best_epoch >= 0 else None,
+            'aug_off_epoch': es.aug_off_epoch,
         }
         with (self.output_dir / 'early_stopping.json').open('w') as f:
             json.dump(summary, f, indent=2)
@@ -75,13 +98,16 @@ class DetSolver(BaseSolver):
         print(f'number of trainable parameters: {n_parameters}')
         print(es)
 
-        if es.stopped_epoch is not None:
-            if es.enabled:
-                print(f'This run already early stopped at epoch {es.stopped_epoch}, nothing to train. '
-                      'Set early_stopping.enabled=False to train on.')
-                self._write_early_stopping_summary()
-                return
-            es.stopped_epoch = None
+        if es.stopped_epoch is not None and es.enabled:
+            print(f'This run already early stopped at epoch {es.stopped_epoch}, nothing to train. '
+                  'Set early_stopping.enabled=False to train on.')
+            self._write_early_stopping_summary()
+            return
+        if not es.enabled:
+            es.reset_stop()
+        elif es.aug_off_epoch is not None:
+            # Resumed inside the finishing epochs
+            self._turn_off_augmentation(es.aug_off_epoch)
 
         start_time = time.time()
         start_epcoch = self.last_epoch + 1
@@ -130,7 +156,9 @@ class DetSolver(BaseSolver):
                         self.writer.add_scalar(f'Test/{k}_{i}'.format(k), v, epoch)
 
             is_best = es.step(test_stats['coco_eval_bbox'][0], epoch)
-            stop = es.should_stop and epoch < args.epoches - 1
+            if es.out_of_patience and not es.finishing:
+                self._begin_finish(epoch)
+            stop = es.finishing and epoch >= es.finish_until and epoch < args.epoches - 1
             if stop:
                 es.stopped_epoch = epoch
 
@@ -147,7 +175,9 @@ class DetSolver(BaseSolver):
                     dist_utils.save_on_master(state, checkpoint_path)
 
             print(f'best_stat: {dict(epoch=es.best_epoch, coco_eval_bbox=es.best_map)}')
-            if es.enabled:
+            if es.finishing:
+                print(f'early_stopping: finishing, stopping after epoch {es.finish_until}')
+            elif es.enabled:
                 print(f'early_stopping: {es.wait}/{es.patience} epochs without a {es.min_delta} gain')
 
             log_stats = {
@@ -173,8 +203,7 @@ class DetSolver(BaseSolver):
                                     self.output_dir / "eval" / name)
 
             if stop:
-                print(f'Early stopping at epoch {epoch}: best epoch {es.best_epoch} '
-                      f'(mAP {es.best_map:.4f}), no {es.min_delta} gain for {es.patience} epochs')
+                print(f'Early stopping after epoch {epoch}: best epoch {es.best_epoch} (mAP {es.best_map:.4f})')
                 break
 
         self._write_early_stopping_summary()

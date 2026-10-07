@@ -6,7 +6,8 @@ class EarlyStopping(object):
     """Tracks the best val mAP and the patience counter, saved in every checkpoint.
     """
 
-    STATE_KEYS = ('best_map', 'best_epoch', 'ref_map', 'wait', 'stopped_epoch')
+    STATE_KEYS = ('best_map', 'best_epoch', 'ref_map', 'wait', 'stopped_epoch',
+                  'finish_until', 'aug_off_epoch')
 
     def __init__(self, enabled: bool = True, patience: int = 10, min_delta: float = 0.001) -> None:
         self.enabled = enabled
@@ -18,6 +19,8 @@ class EarlyStopping(object):
         self.ref_map = float('-inf')
         self.wait = 0
         self.stopped_epoch = None
+        self.finish_until = None
+        self.aug_off_epoch = None
 
     def step(self, value: float, epoch: int) -> bool:
         """Record one epoch's val mAP. Returns True when it is the new best."""
@@ -35,8 +38,17 @@ class EarlyStopping(object):
         return is_best
 
     @property
-    def should_stop(self) -> bool:
+    def out_of_patience(self) -> bool:
         return self.enabled and self.wait >= self.patience
+
+    @property
+    def finishing(self) -> bool:
+        return self.finish_until is not None
+
+    def reset_stop(self) -> None:
+        self.stopped_epoch = None
+        self.finish_until = None
+        self.aug_off_epoch = None
 
     def state_dict(self):
         return {k: getattr(self, k) for k in self.STATE_KEYS}
@@ -49,4 +61,5 @@ class EarlyStopping(object):
     def __repr__(self) -> str:
         return (f'EarlyStopping(enabled={self.enabled}, patience={self.patience}, '
                 f'min_delta={self.min_delta}, best_map={self.best_map}, '
-                f'best_epoch={self.best_epoch}, wait={self.wait})')
+                f'best_epoch={self.best_epoch}, wait={self.wait}, '
+                f'finish_until={self.finish_until})')
