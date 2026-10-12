@@ -5,7 +5,7 @@ checkpoint_freq: 1
 
 early_stopping:
   enabled: True
-  patience: 10
+  patience: 20
   min_delta: 0.001 
 
 sync_bn: True

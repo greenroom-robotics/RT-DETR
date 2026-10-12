@@ -9,7 +9,7 @@ class EarlyStopping(object):
     STATE_KEYS = ('best_map', 'best_epoch', 'ref_map', 'wait', 'stopped_epoch',
                   'finish_until', 'aug_off_epoch')
 
-    def __init__(self, enabled: bool = True, patience: int = 10, min_delta: float = 0.001) -> None:
+    def __init__(self, enabled: bool = True, patience: int = 20, min_delta: float = 0.001) -> None:
         self.enabled = enabled
         self.patience = patience
         self.min_delta = min_delta
