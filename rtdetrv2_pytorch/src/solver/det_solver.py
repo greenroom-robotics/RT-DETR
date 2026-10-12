@@ -1,36 +1,117 @@
 """Copyright(c) 2023 lyuwenyu. All Rights Reserved.
 """
 
-import time 
+import time
 import json
 import datetime
+import shutil
+from pathlib import Path
 
-import torch 
+import torch
 
 from ..misc import dist_utils, profiler_utils
 
 from ._solver import BaseSolver
 from .det_engine import train_one_epoch, evaluate
+from .early_stopping import EarlyStopping
 
 
 class DetSolver(BaseSolver):
-    
+
+    def train(self, ):
+        self.early_stopping = EarlyStopping(**(self.cfg.yaml_cfg.get('early_stopping') or {}))
+        super().train()
+        if self.cfg.resume:
+            self._carry_over_best()
+
+    def _carry_over_best(self, ):
+        """Keep the restored best backed by its weights when resuming into a new output dir
+        """
+        es = self.early_stopping
+        if es.best_epoch < 0:
+            return
+
+        best_pth = self.output_dir / 'best.pth'
+        resume_dir = Path(self.cfg.resume).parent
+        candidates = [best_pth, resume_dir / 'best.pth', resume_dir / f'checkpoint{es.best_epoch:04}.pth']
+        for path in candidates:
+            if path.exists() and torch.load(path, map_location='cpu').get('last_epoch') == es.best_epoch:
+                if path != best_pth and dist_utils.is_main_process():
+                    shutil.copyfile(path, best_pth)
+                print(f'best.pth: epoch {es.best_epoch} (mAP {es.best_map:.4f}) from {path}')
+                return
+
+        print(f'WARNING: weights for the best epoch {es.best_epoch} (mAP {es.best_map:.4f}) not found '
+              f'next to {self.cfg.resume}. best.pth will only cover the resumed epochs.')
+        es.best_map, es.best_epoch = float('-inf'), -1
+
+    def _stop_epoch_policy(self, ):
+        transforms = getattr(self.train_dataloader.dataset, '_transforms', None)
+        policy = getattr(transforms, 'policy', None) or {}
+        return (transforms, policy) if policy.get('name') == 'stop_epoch' else (None, {})
+
+    def _turn_off_augmentation(self, from_epoch):
+        transforms, policy = self._stop_epoch_policy()
+        if not policy or from_epoch >= policy['epoch']:
+            return False
+        transforms.policy = {**policy, 'epoch': from_epoch}
+        return True
+
+    def _begin_finish(self, epoch):
+        es = self.early_stopping
+        _, policy = self._stop_epoch_policy()
+        clean_epochs = max(self.cfg.epoches - policy['epoch'], 0) if policy else 0
+        es.finish_until = min(epoch + clean_epochs, self.cfg.epoches - 1)
+        if es.finish_until > epoch and self._turn_off_augmentation(epoch + 1):
+            es.aug_off_epoch = epoch + 1
+        aug_off = f'augmentation off from epoch {es.aug_off_epoch}, ' if es.aug_off_epoch is not None else ''
+        print(f'Patience ran out at epoch {epoch}: {aug_off}stopping after epoch {es.finish_until}')
+
+    def _write_early_stopping_summary(self, ):
+        if not (self.output_dir and dist_utils.is_main_process()):
+            return
+        es = self.early_stopping
+        summary = {
+            'enabled': es.enabled,
+            'patience': es.patience,
+            'min_delta': es.min_delta,
+            'epochs_budget': self.cfg.epoches,
+            'early_stopped': es.stopped_epoch is not None,
+            'stopped_epoch': self.last_epoch,
+            'best_epoch': es.best_epoch,
+            'best_map': es.best_map if es.best_epoch >= 0 else None,
+            'aug_off_epoch': es.aug_off_epoch,
+        }
+        with (self.output_dir / 'early_stopping.json').open('w') as f:
+            json.dump(summary, f, indent=2)
+
     def fit(self, ):
         print("Start training")
         self.train()
         args = self.cfg
+        es = self.early_stopping
 
         with open(str(self.output_dir / 'config.txt'), 'w') as f:
             f.write(str(self.cfg.__dict__))
 
         n_parameters = sum([p.numel() for p in self.model.parameters() if p.requires_grad])
         print(f'number of trainable parameters: {n_parameters}')
+        print(es)
 
-        best_stat = {'epoch': -1, }
+        if es.stopped_epoch is not None and es.enabled:
+            print(f'This run already early stopped at epoch {es.stopped_epoch}, nothing to train. '
+                  'Set early_stopping.enabled=False to train on.')
+            self._write_early_stopping_summary()
+            return
+        if not es.enabled:
+            es.reset_stop()
+        elif es.aug_off_epoch is not None:
+            # Resumed inside the finishing epochs
+            self._turn_off_augmentation(es.aug_off_epoch)
 
         start_time = time.time()
         start_epcoch = self.last_epoch + 1
-        
+
         for epoch in range(start_epcoch, args.epoches):
 
             self.train_dataloader.set_epoch(epoch)
@@ -58,14 +139,6 @@ class DetSolver(BaseSolver):
             
             self.last_epoch += 1
 
-            if self.output_dir:
-                checkpoint_paths = [self.output_dir / 'last.pth']
-                # extra checkpoint before LR drop and every 100 epochs
-                if (epoch + 1) % args.checkpoint_freq == 0:
-                    checkpoint_paths.append(self.output_dir / f'checkpoint{epoch:04}.pth')
-                for checkpoint_path in checkpoint_paths:
-                    dist_utils.save_on_master(self.state_dict(), checkpoint_path)
-
             module = self.ema.module if self.ema else self.model
             test_stats, coco_evaluator = evaluate(
                 module, 
@@ -76,23 +149,36 @@ class DetSolver(BaseSolver):
                 self.device
             )
 
-            # TODO 
+            # TODO
             for k in test_stats:
                 if self.writer and dist_utils.is_main_process():
                     for i, v in enumerate(test_stats[k]):
                         self.writer.add_scalar(f'Test/{k}_{i}'.format(k), v, epoch)
-            
-                if k in best_stat:
-                    best_stat['epoch'] = epoch if test_stats[k][0] > best_stat[k] else best_stat['epoch']
-                    best_stat[k] = max(best_stat[k], test_stats[k][0])
-                else:
-                    best_stat['epoch'] = epoch
-                    best_stat[k] = test_stats[k][0]
 
-                if best_stat['epoch'] == epoch and self.output_dir:
-                    dist_utils.save_on_master(self.state_dict(), self.output_dir / 'best.pth')
+            is_best = es.step(test_stats['coco_eval_bbox'][0], epoch)
+            if es.out_of_patience and not es.finishing:
+                self._begin_finish(epoch)
+            stop = es.finishing and epoch >= es.finish_until and epoch < args.epoches - 1
+            if stop:
+                es.stopped_epoch = epoch
 
-            print(f'best_stat: {best_stat}')
+            # Saved after eval, so a resume picks up this epoch's early stopping state
+            if self.output_dir:
+                checkpoint_paths = [self.output_dir / 'last.pth']
+                # extra checkpoint before LR drop and every 100 epochs
+                if (epoch + 1) % args.checkpoint_freq == 0:
+                    checkpoint_paths.append(self.output_dir / f'checkpoint{epoch:04}.pth')
+                if is_best:
+                    checkpoint_paths.append(self.output_dir / 'best.pth')
+                state = self.state_dict()
+                for checkpoint_path in checkpoint_paths:
+                    dist_utils.save_on_master(state, checkpoint_path)
+
+            print(f'best_stat: {dict(epoch=es.best_epoch, coco_eval_bbox=es.best_map)}')
+            if es.finishing:
+                print(f'early_stopping: finishing, stopping after epoch {es.finish_until}')
+            elif es.enabled:
+                print(f'early_stopping: {es.wait}/{es.patience} epochs without a {es.min_delta} gain')
 
             log_stats = {
                 **{f'train_{k}': v for k, v in train_stats.items()},
@@ -115,6 +201,12 @@ class DetSolver(BaseSolver):
                         for name in filenames:
                             torch.save(coco_evaluator.coco_eval["bbox"].eval,
                                     self.output_dir / "eval" / name)
+
+            if stop:
+                print(f'Early stopping after epoch {epoch}: best epoch {es.best_epoch} (mAP {es.best_map:.4f})')
+                break
+
+        self._write_early_stopping_summary()
 
         total_time = time.time() - start_time
         total_time_str = str(datetime.timedelta(seconds=int(total_time)))
