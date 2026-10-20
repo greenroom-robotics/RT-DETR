@@ -24,16 +24,16 @@ train_dataloader:
         - {type: RandomIoUCrop, p: 0.8}
         - {type: SanitizeBoundingBoxes, min_size: 1}
         - {type: RandomHorizontalFlip}
-        - {type: Resize, size: [640, 640], }
+        - {type: Resize, size: [1280, 1280], }
         - {type: SanitizeBoundingBoxes, min_size: 1}
         - {type: ConvertPILImage, dtype: 'float32', scale: True}   
         - {type: ConvertBoxes, fmt: 'cxcywh', normalize: True}    
       policy:
         epoch: 117
   collate_fn:
-    type: BatchImageCollateFuncion  
-    scales: ~
-  total_batch_size: 18
+    type: BatchImageCollateFuncion
+    scales: [640, 640, 704, 768, 832, 896, 960, 1024, 1088, 1152, 1216, 1280, 1280]
+  total_batch_size: 6
   shuffle: True
   num_workers: 4
   drop_last: True 
@@ -48,7 +48,7 @@ val_dataloader:
     transforms:
       type: Compose
       ops: 
-        - {type: Resize, size: [640, 640]}
+        - {type: Resize, size: [1280, 1280]}
         - {type: ConvertPILImage, dtype: 'float32', scale: True}   
   total_batch_size: 32
   shuffle: False
@@ -80,4 +80,4 @@ optimizer:
       params: '^(?=.*(?:norm|bn)).*$'
       weight_decay: 0.
 
-eval_spatial_size: [640, 640]
+eval_spatial_size: [1280, 1280]
