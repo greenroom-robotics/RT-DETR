@@ -111,7 +111,7 @@ def evaluate(model: torch.nn.Module, criterion: torch.nn.Module, postprocessor, 
 
     metric_logger = MetricLogger(delimiter="  ")
     # metric_logger.add_meter('class_error', SmoothedValue(window_size=1, fmt='{value:.2f}'))
-    header = 'Test:'
+    header = 'Val:'
     
     # iou_types = tuple(k for k in ('segm', 'bbox') if k in postprocessor.keys())
     iou_types = coco_evaluator.iou_types

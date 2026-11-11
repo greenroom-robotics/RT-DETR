@@ -153,7 +153,7 @@ class DetSolver(BaseSolver):
             for k in test_stats:
                 if self.writer and dist_utils.is_main_process():
                     for i, v in enumerate(test_stats[k]):
-                        self.writer.add_scalar(f'Test/{k}_{i}'.format(k), v, epoch)
+                        self.writer.add_scalar(f'Val/{k}_{i}'.format(k), v, epoch)
 
             is_best = es.step(test_stats['coco_eval_bbox'][0], epoch)
             if es.out_of_patience and not es.finishing:
